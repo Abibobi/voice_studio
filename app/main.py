@@ -15,7 +15,27 @@ from app.schemas import (
 from app.utils.audio import bytes_to_audio, save_wav
 from app.utils.gpu import vram_stats
 
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+import os
+
 app = FastAPI(title="Voice Studio API", version="0.1.0")
+
+# Allow the React dev server to hit the API + fetch audio files
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ensure folder exists
+os.makedirs(CONFIG.output_dir, exist_ok=True)
+
+# expose generated files at /outputs/*
+app.mount("/outputs", StaticFiles(directory=CONFIG.output_dir), name="outputs")
+
 router = ModelRouter()
 
 ModelName = Literal["chatterbox_multilingual", "chatterbox_turbo"]
@@ -97,3 +117,25 @@ async def synthesize(
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+from pydantic import BaseModel
+from app.services.gemini_translate import translate_preserve_style
+
+class TranslateRequest(BaseModel):
+    text: str
+    target_language: str
+
+class TranslateResponse(BaseModel):
+    translated_text: str
+
+@app.post("/translate", response_model=TranslateResponse)
+async def translate(req: TranslateRequest):
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="text is required")
+    if not req.target_language.strip():
+        raise HTTPException(status_code=400, detail="target_language is required")
+    try:
+        translated = translate_preserve_style(req.text, req.target_language)
+        return TranslateResponse(translated_text=translated)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Translation failed: {e}")

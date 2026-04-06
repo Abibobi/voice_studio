@@ -1,0 +1,46 @@
+# ──── Environment / Secrets ────
+.env
+.env.*
+
+# ──── Python ────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# ──── Generated audio outputs ────
+outputs/
+
+# ──── Node / React (voice-studio-web) ────
+node_modules/
+voice-studio-web/node_modules/
+voice-studio-web/dist/
+
+# ──── IDE / Editor ────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ──── ML model caches ────
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+*.ckpt
+
+# ──── Misc ────
+*.log
+tmp/
+.cache/
