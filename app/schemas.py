@@ -1,15 +1,19 @@
 from __future__ import annotations
 from typing import Optional, Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+
+
+ModelName = Literal["chatterbox_multilingual", "chatterbox_turbo"]
 
 
 class SwitchModelRequest(BaseModel):
-    model: Literal["svara", "chatterbox"]
+    model: ModelName
 
 
 class SynthesizeResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
     ok: bool = True
-    model_used: Literal["svara", "chatterbox"]
+    engine_used: ModelName
     route_reason: str
     language: str
     emotion: Optional[str] = None
@@ -19,5 +23,5 @@ class SynthesizeResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     ok: bool
-    active_model: Optional[Literal["svara", "chatterbox"]] = None
+    active_model: Optional[ModelName] = None
     gpu: dict

@@ -4,12 +4,11 @@ from typing import Literal, Optional
 import threading
 
 from app.config import CONFIG
-from app.models.svara_adapter import SvaraAdapter
-from app.models.chatterbox_adapter import ChatterboxAdapter
 from app.utils.gpu import clear_vram, vram_stats
+from app.models.chatterbox_multilingual_adapter import ChatterboxMultilingualAdapter
+from app.models.chatterbox_turbo_adapter import ChatterboxTurboAdapter
 
-
-ModelName = Literal["svara", "chatterbox"]
+ModelName = Literal["chatterbox_multilingual", "chatterbox_turbo"]
 
 
 @dataclass
@@ -22,31 +21,44 @@ class ModelRouter:
     def __init__(self):
         self._lock = threading.RLock()
         self.active: Optional[ModelName] = None
-        self.svara = SvaraAdapter(device=CONFIG.device, model_id=CONFIG.svara_model_id)
-        self.chatterbox = ChatterboxAdapter(device=CONFIG.device, repo=CONFIG.chatterbox_repo)
+        self.multilingual = ChatterboxMultilingualAdapter(device=CONFIG.device)
+        self.turbo = ChatterboxTurboAdapter(device=CONFIG.device)
 
-    def decide_model(self, language: str, emotion: Optional[str]) -> RouteDecision:
-        indian_langs = {"hi", "bn", "ta", "te", "ml", "mr", "kn", "gu", "pa", "or", "as", "ur"}
-        if language.lower() in indian_langs and not emotion:
-            return RouteDecision(model="svara", reason="Indian language without emotion preference.")
-        return RouteDecision(model="chatterbox", reason="Global language or emotion requested.")
+    def decide_model(self, language: str, prefer_similarity: bool = False) -> RouteDecision:
+        lang = language.lower()
+        if lang != "en":
+            return RouteDecision(
+                model="chatterbox_multilingual",
+                reason="Non-English language routed to multilingual model.",
+            )
+        if prefer_similarity:
+            return RouteDecision(
+                model="chatterbox_turbo",
+                reason="English + similarity preference routed to turbo.",
+            )
+        return RouteDecision(
+            model="chatterbox_turbo",
+            reason="Default English route to turbo.",
+        )
+
+    def _unload_active(self):
+        if self.active == "chatterbox_multilingual":
+            self.multilingual.unload()
+        elif self.active == "chatterbox_turbo":
+            self.turbo.unload()
 
     def switch(self, target: ModelName) -> dict:
         with self._lock:
             if self.active == target:
                 return {"active_model": self.active, "changed": False, "vram": vram_stats()}
 
-            if self.active == "svara":
-                self.svara.unload()
-            elif self.active == "chatterbox":
-                self.chatterbox.unload()
-
+            self._unload_active()
             clear_vram()
 
-            if target == "svara":
-                self.svara.load()
+            if target == "chatterbox_multilingual":
+                self.multilingual.load()
             else:
-                self.chatterbox.load()
+                self.turbo.load()
 
             self.active = target
             return {"active_model": self.active, "changed": True, "vram": vram_stats()}
@@ -59,15 +71,19 @@ class ModelRouter:
         speaker_audio=None,
         speaker_sr=None,
         force_model: Optional[ModelName] = None,
+        prefer_similarity: bool = False,
     ):
         with self._lock:
-            decision = self.decide_model(language, emotion) if force_model is None else RouteDecision(
-                model=force_model, reason=f"Forced model: {force_model}"
+            decision = (
+                RouteDecision(model=force_model, reason=f"Forced model: {force_model}")
+                if force_model
+                else self.decide_model(language=language, prefer_similarity=prefer_similarity)
             )
+
             self.switch(decision.model)
 
-            if decision.model == "svara":
-                audio, sr = self.svara.synthesize(
+            if decision.model == "chatterbox_multilingual":
+                audio, sr = self.multilingual.synthesize(
                     text=text,
                     language=language,
                     emotion=emotion,
@@ -75,7 +91,7 @@ class ModelRouter:
                     speaker_sr=speaker_sr,
                 )
             else:
-                audio, sr = self.chatterbox.synthesize(
+                audio, sr = self.turbo.synthesize(
                     text=text,
                     language=language,
                     emotion=emotion,

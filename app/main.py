@@ -1,32 +1,42 @@
 from __future__ import annotations
-import traceback
-from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse
+import traceback
+from typing import Optional, Literal
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
 from app.config import CONFIG
-from app.schemas import SwitchModelRequest, SynthesizeResponse, HealthResponse
 from app.router.model_router import ModelRouter
-from app.utils.audio import save_wav, bytes_to_audio, ensure_dir
+from app.schemas import (
+    HealthResponse,
+    SwitchModelRequest,
+    SynthesizeResponse,
+)
+from app.utils.audio import bytes_to_audio, save_wav
 from app.utils.gpu import vram_stats
 
-app = FastAPI(title="Voice Studio API", version="1.0.0")
+app = FastAPI(title="Voice Studio API", version="0.1.0")
 router = ModelRouter()
-ensure_dir(CONFIG.output_dir)
+
+ModelName = Literal["chatterbox_multilingual", "chatterbox_turbo"]
 
 
 @app.get("/health", response_model=HealthResponse)
 def health():
-    return HealthResponse(ok=True, active_model=router.active, gpu=vram_stats())
+    return HealthResponse(
+        ok=True,
+        active_model=router.active,
+        gpu=vram_stats(),
+    )
 
 
 @app.post("/switch-model")
-def switch_model(payload: SwitchModelRequest):
+def switch_model(req: SwitchModelRequest):
     try:
-        result = router.switch(payload.model)
+        result = router.switch(req.model)
         return {"ok": True, **result}
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -35,21 +45,25 @@ async def synthesize(
     text: str = Form(..., min_length=1),
     language: str = Form(..., min_length=2, max_length=8),
     emotion: Optional[str] = Form(default=None),
-    force_model: Optional[str] = Form(default=None),
+    force_model: Optional[str] = Form(default=None),  # chatterbox_multilingual | chatterbox_turbo
+    prefer_similarity: bool = Form(default=False),
     speaker_wav: Optional[UploadFile] = File(default=None),
 ):
     try:
+        # Always define defaults
         speaker_audio = None
         speaker_sr = None
+
         if speaker_wav is not None:
             wav_bytes = await speaker_wav.read()
             speaker_audio, speaker_sr = bytes_to_audio(wav_bytes)
 
-        force_model_norm = None
-        if force_model:
-            if force_model not in {"svara", "chatterbox"}:
-                raise HTTPException(status_code=400, detail="force_model must be 'svara' or 'chatterbox'")
-            force_model_norm = force_model
+        valid_models = {"chatterbox_multilingual", "chatterbox_turbo"}
+        if force_model and force_model not in valid_models:
+            raise HTTPException(
+                status_code=400,
+                detail="force_model must be 'chatterbox_multilingual' or 'chatterbox_turbo'",
+            )
 
         audio, sr, decision = router.synthesize(
             text=text,
@@ -57,25 +71,29 @@ async def synthesize(
             emotion=emotion,
             speaker_audio=speaker_audio,
             speaker_sr=speaker_sr,
-            force_model=force_model_norm,
+            force_model=force_model,  # type: ignore[arg-type]
+            prefer_similarity=prefer_similarity,
         )
 
-        out_path = save_wav(audio=audio, sr=sr, out_dir=CONFIG.output_dir, prefix=decision.model)
+        out_path = save_wav(
+            audio=audio,
+            sr=sr,
+            out_dir=CONFIG.output_dir,
+            prefix=decision.model,
+        )
+
         return SynthesizeResponse(
-            model_used=decision.model,
+            ok=True,
+            engine_used=decision.model,
             route_reason=decision.reason,
             language=language.lower(),
             emotion=emotion,
             sample_rate=sr,
             output_wav_path=out_path,
         )
+
     except HTTPException:
         raise
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.exception_handler(Exception)
-async def unhandled_exception_handler(request, exc):
-    return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
