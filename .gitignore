@@ -17,6 +17,10 @@ env/
 
 # ──── Generated audio outputs ────
 outputs/
+voice_profiles/
+
+# ──── Local database ────
+voice_studio.db
 
 # ──── Node / React (voice-studio-web) ────
 node_modules/
